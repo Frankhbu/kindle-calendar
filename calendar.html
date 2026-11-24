@@ -1,0 +1,1370 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Kindle 日历 758×1024</title>
+    <!-- 本地依赖，无需联网、无需授权 -->
+    <script src="vendor/html2canvas.min.js"></script>
+    <script src="vendor/lunar.min.js"></script>
+    <script src="vendor/jszip.min.js"></script>
+    <!-- 节假日与调休安排：每年新增/调整只改这个文件 -->
+    <script src="data/holidays.js"></script>
+    <!-- 底部诗句 / 名言：想换一套只改这个文件 -->
+    <script src="data/poems.js"></script>
+    <style>
+        :root {
+            --bg-color: #ffffff;
+            --text-main: #000000;
+            --text-sub: #888888;
+            --text-light: #cccccc;
+            --border-color: #e0e0e0;
+            --bg-gray: #ebebeb; /* 不上班日期的背景色 */
+            --bg-dark-gray: #333333;
+            --text-white: #ffffff;
+            --page-bg: #f0f0f0;
+            --ui-border: #e5e5e5;
+
+            /* 三个可独立调整排版区域，脚本会按左侧面板的选择覆盖这些变量 */
+            /* 1. 年月标题 */
+            --font-header: -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+            --size-header: 32px;
+            /* 2. 星期表头 */
+            --font-weekdays: -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+            --size-weekdays: 20px;
+            /* 3. 日期数字 + 农历（农历字号按比例跟随日期数字） */
+            --font-date: -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+            --size-date: 28px;
+            --size-lunar: 15px;
+            /* 4. 底部诗句 / 落款（字体固定楷体，只调字号） */
+            --size-poem: 22px;
+            --size-poem-sig: 14px;
+        }
+
+        /* 篆体字体：把字体文件命名为 zhuan.ttf 放进 fonts/ 目录即可生效
+           （macOS / Windows 都不自带篆体，必须自己提供字体文件） */
+        @font-face {
+            font-family: "ZhuanTi";
+            src: url("fonts/zhuan.ttf") format("truetype"),
+                 url("fonts/zhuan.otf") format("opentype");
+            font-display: swap;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        html, body {
+            height: 100%;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            color: var(--text-main);
+            background: var(--page-bg);
+            overflow: hidden;
+        }
+
+        /* ================= 页面骨架：左右各占一半 ================= */
+        .app {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            height: 100vh;
+        }
+
+        /* ---------- 左侧：选项与操作 ---------- */
+        .sidebar {
+            display: flex;
+            flex-direction: column;
+            gap: 28px;
+            padding: 40px;
+            overflow-y: auto;
+            background: var(--bg-color);
+            border-right: 1px solid var(--ui-border);
+        }
+
+        .brand h1 {
+            font-size: 24px;
+            letter-spacing: 0.5px;
+        }
+
+        .brand p {
+            margin-top: 8px;
+            font-size: 15px;
+            line-height: 1.6;
+            color: var(--text-sub);
+        }
+
+        .panel {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+
+        .panel > h2 {
+            font-size: 12px;
+            font-weight: 600;
+            letter-spacing: 1.5px;
+            color: var(--text-sub);
+        }
+
+        .month-nav {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .month-nav .current {
+            flex: 1;
+            text-align: center;
+            font-size: 22px;
+            font-weight: 700;
+        }
+
+        button {
+            font: inherit;
+            color: inherit;
+            cursor: pointer;
+        }
+
+        .btn {
+            border: 1px solid var(--text-main);
+            background: var(--bg-color);
+            border-radius: 8px;
+            padding: 10px 16px;
+            font-size: 15px;
+            transition: background 0.2s, color 0.2s, opacity 0.2s;
+        }
+
+        .btn:hover {
+            background: var(--text-main);
+            color: var(--text-white);
+        }
+
+        .btn:disabled {
+            opacity: 0.5;
+            cursor: default;
+        }
+
+        .icon-btn {
+            width: 40px;
+            height: 40px;
+            padding: 0;
+            border: 1px solid var(--text-main);
+            border-radius: 50%;
+            background: var(--bg-color);
+            font-size: 16px;
+            line-height: 1;
+            transition: background 0.2s, color 0.2s;
+        }
+
+        .icon-btn:hover {
+            background: var(--text-main);
+            color: var(--text-white);
+        }
+
+        .btn.primary {
+            width: 100%;
+            padding: 14px 18px;
+            font-size: 16px;
+            font-weight: 600;
+            background: var(--text-main);
+            color: var(--text-white);
+            border-color: var(--text-main);
+        }
+
+        .btn.primary:hover {
+            opacity: 0.85;
+            background: var(--text-main);
+            color: var(--text-white);
+        }
+
+        select {
+            width: 100%;
+            padding: 10px 12px;
+            font: inherit;
+            font-size: 15px;
+            color: inherit;
+            background: var(--bg-color);
+            border: 1px solid var(--text-main);
+            border-radius: 8px;
+        }
+
+        /* 年份跳转行 */
+        .jump-row {
+            display: grid;
+            grid-template-columns: 84px 1fr auto;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .jump-row > label {
+            font-size: 15px;
+            color: var(--text-sub);
+        }
+
+        .jump-row input[type="number"] {
+            width: 100%;
+            padding: 8px 10px;
+            font: inherit;
+            font-size: 14px;
+            color: inherit;
+            background: var(--bg-color);
+            border: 1px solid var(--text-main);
+            border-radius: 8px;
+        }
+
+        .jump-row .btn {
+            padding: 8px 14px;
+            font-size: 14px;
+        }
+
+        /* 整行下拉框（诗句集） */
+        .wide-row {
+            display: grid;
+            grid-template-columns: 84px 1fr;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .wide-row > label {
+            font-size: 15px;
+            color: var(--text-sub);
+        }
+
+        .wide-row > select {
+            padding: 8px 10px;
+            font-size: 14px;
+        }
+
+        /* 只调字号的行（诗句 / 落款）：数字框和上面几行右对齐 */
+        .size-row {
+            display: grid;
+            grid-template-columns: 84px 58px 20px;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .size-row > label {
+            grid-column: 1;
+            font-size: 15px;
+            color: var(--text-sub);
+        }
+
+        .size-row > input[type="number"] {
+            grid-column: 2;
+            width: 100%;
+            padding: 8px 2px;
+            font: inherit;
+            font-size: 14px;
+            text-align: center;
+            color: inherit;
+            background: var(--bg-color);
+            border: 1px solid var(--text-main);
+            border-radius: 8px;
+        }
+
+        .size-row > .unit {
+            grid-column: 3;
+            font-size: 12px;
+            color: var(--text-sub);
+        }
+
+        /* 排版设置行：区域名 / 字体 / 字号 / 单位 */
+        .type-row {
+            display: grid;
+            grid-template-columns: 84px 1fr 58px 20px;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .type-row > label {
+            font-size: 15px;
+            color: var(--text-sub);
+        }
+
+        .type-row select {
+            padding: 8px 8px;
+            font-size: 14px;
+        }
+
+        .type-row input[type="number"] {
+            width: 100%;
+            padding: 8px 2px;
+            font: inherit;
+            font-size: 14px;
+            text-align: center;
+            color: inherit;
+            background: var(--bg-color);
+            border: 1px solid var(--text-main);
+            border-radius: 8px;
+        }
+
+        .type-row .unit {
+            font-size: 12px;
+            color: var(--text-sub);
+        }
+
+        .hint {
+            font-size: 15px;
+            line-height: 1.7;
+            color: var(--text-sub);
+        }
+
+        .hint.error {
+            color: #b00020;
+        }
+
+        /* 导出遮罩：截图时盖住页面，避免画布跳到左上角，同时显示进度 */
+        .export-mask {
+            position: fixed;
+            inset: 0;
+            z-index: 9999;
+            display: none;
+            align-items: center;
+            justify-content: center;
+            background: var(--page-bg);
+        }
+
+        .export-mask.active {
+            display: flex;
+        }
+
+        .export-mask span {
+            font-size: 18px;
+            color: var(--text-sub);
+            letter-spacing: 0.5px;
+        }
+
+        /* ---------- 右侧：日历展示区（截图区域） ---------- */
+        .preview {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            overflow: hidden;
+            background: var(--page-bg);
+        }
+
+        /* 缩放容器：尺寸由 JS 按可用空间计算，保证日历完整可见且不撑破右半屏 */
+        .stage {
+            position: relative;
+            width: 758px;
+            height: 1024px;
+        }
+
+        /* 核心显示区域 - 严格固定 758 * 1024（Kindle 竖屏尺寸） */
+        .calendar-container {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 758px;
+            height: 1024px;
+            transform-origin: top left;
+            background: var(--bg-color);
+            font-family: var(--font-date); /* 兜底：日历内默认跟随日期区字体 */
+            border-radius: 16px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.12);
+            padding: 40px 30px; /* 左右减小一点，上下保持 */
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        /* 顶部标题 (年月 + 农历生肖) */
+        .calendar-header {
+            text-align: center;
+            margin-bottom: 25px;
+        }
+
+        .calendar-header h1 {
+            font-family: var(--font-header);
+            font-size: var(--size-header);
+            font-weight: bold;
+            color: var(--text-main);
+            letter-spacing: 1px;
+        }
+
+        /* 星期表头 */
+        .weekdays {
+            display: grid;
+            grid-template-columns: repeat(7, 1fr);
+            text-align: center;
+            margin-bottom: 15px;
+            border-bottom: 2px solid var(--border-color);
+            padding-bottom: 15px;
+        }
+
+        .weekdays div {
+            font-family: var(--font-weekdays);
+            font-size: var(--size-weekdays);
+            color: var(--text-sub);
+            font-weight: 500;
+        }
+
+        /* 日期网格 */
+        .days-grid {
+            display: grid;
+            grid-template-columns: repeat(7, 1fr);
+            grid-auto-rows: auto;
+            gap: 6px;
+            /* 不撑满剩余高度：格子按正方形排列，下方空出来的地方留白 */
+        }
+
+        /* 单个日期格子 */
+        .day-cell {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: flex-start;
+            position: relative;
+            padding-top: 10px;
+            border-radius: 12px;
+            aspect-ratio: 1 / 1; /* 正方形格子，尺寸由列宽决定 */
+            font-family: var(--font-date);
+        }
+
+        .solar-day {
+            font-size: var(--size-date);
+            font-weight: 600;
+            color: var(--text-main);
+            line-height: 1.2;
+            z-index: 2;
+        }
+
+        .lunar-day {
+            font-size: var(--size-lunar);
+            color: var(--text-sub);
+            margin-top: 6px;
+            z-index: 2;
+        }
+
+        .lunar-day.special {
+            color: var(--text-main);
+            font-weight: 500;
+        }
+
+        .day-cell.other-month .solar-day {
+            color: var(--text-light);
+        }
+        .day-cell.other-month .lunar-day {
+            color: var(--text-light);
+        }
+
+        /* 休/班 徽标：字号写死，不随任何区域排版设置变化 */
+        .badge {
+            position: absolute;
+            top: 8px;
+            right: 12%;
+            font-size: 12px; /* 固定值，勿改成 var() */
+            line-height: 1.2;
+            padding: 2px 5px;
+            border-radius: 4px;
+            z-index: 3;
+            font-weight: bold;
+        }
+
+        .badge.rest {
+            background-color: var(--text-main);
+            color: var(--text-white);
+        }
+
+        .badge.work {
+            background-color: var(--bg-dark-gray);
+            color: var(--text-white);
+        }
+
+        /* ============ 底部诗句（国画落款样式） ============ */
+        .poem-footer {
+            flex: 0 0 auto;
+            margin-top: auto;   /* 把落款推到画布最底部，正好用掉格子下方的留白 */
+            padding-top: 24px;
+        }
+
+        .poem-text {
+            font-family: "Kaiti SC", "STKaiti", "KaiTi", "Songti SC", serif;
+            font-size: var(--size-poem);
+            letter-spacing: 4px;
+            text-indent: 4px;   /* 抵消末字字距，视觉上真正居中 */
+            text-align: center;
+            color: #333333;
+        }
+
+        /* 当前诗句集缺这一月的内容时收起落款区 */
+        .poem-footer.is-empty {
+            display: none;
+        }
+
+        .poem-signature {
+            width: 100%;
+            padding-right: 30px;
+            /* 落款紧贴 footer 底部；这里留的间距越大，诗句被顶得越高，落款位置不变 */
+            margin-top: 34px;
+            font-size: var(--size-poem-sig);
+            letter-spacing: 1px;
+            text-align: right;
+            color: var(--text-sub);
+        }
+
+        /* 不上班的日期（普通周末 + 法定节假日）统一加背景色 */
+        .day-cell.bg-highlight {
+            background-color: var(--bg-gray);
+        }
+    </style>
+</head>
+<body>
+
+    <div class="app">
+        <!-- ============ 左侧：选项与功能按钮 ============ -->
+        <aside class="sidebar">
+            <div class="brand">
+                <h1>Kindle 日历</h1>
+                <p>纯静态页面，无需联网。右侧为 758 × 1024 的日历画布，截图只截这一块。</p>
+            </div>
+
+            <section class="panel">
+                <h2>月份</h2>
+                <div class="month-nav">
+                    <button id="prevBtn" class="icon-btn" title="上一月（←）">←</button>
+                    <span id="monthTitle" class="current">2026年 10月</span>
+                    <button id="nextBtn" class="icon-btn" title="下一月（→）">→</button>
+                </div>
+                <div class="jump-row">
+                    <label for="yearInput">年份</label>
+                    <input id="yearInput" type="number" min="1900" max="2200" step="1" value="2026" aria-label="跳转年份">
+                    <button id="todayBtn" class="btn" type="button">今天</button>
+                </div>
+                <p id="holidayHint" class="hint"></p>
+            </section>
+
+            <section class="panel">
+                <h2>排版</h2>
+
+                <div class="type-row">
+                    <label for="fontHeader">年月</label>
+                    <select id="fontHeader"></select>
+                    <input id="sizeHeader" type="number" min="12" max="56" step="1" value="32" aria-label="年月字号">
+                    <span class="unit">px</span>
+                </div>
+
+                <div class="type-row">
+                    <label for="fontWeekdays">星期表头</label>
+                    <select id="fontWeekdays"></select>
+                    <input id="sizeWeekdays" type="number" min="10" max="44" step="1" value="20" aria-label="星期表头字号">
+                    <span class="unit">px</span>
+                </div>
+
+                <div class="type-row">
+                    <label for="fontDate">日期与农历</label>
+                    <select id="fontDate"></select>
+                    <input id="sizeDate" type="number" min="12" max="40" step="1" value="28" aria-label="日期字号">
+                    <span class="unit">px</span>
+                </div>
+
+                <p class="hint">农历字号按比例跟随「日期」字号，休/班徽标固定 12px 不受影响。</p>
+                <p id="fontHint" class="hint"></p>
+            </section>
+
+            <section class="panel">
+                <h2>诗句</h2>
+
+                <div class="wide-row">
+                    <label for="poemSetSelect">诗句集</label>
+                    <select id="poemSetSelect"></select>
+                </div>
+
+                <div class="size-row">
+                    <label for="sizePoem">诗句</label>
+                    <input id="sizePoem" type="number" min="12" max="40" step="1" value="22" aria-label="诗句字号">
+                    <span class="unit">px</span>
+                </div>
+
+                <div class="size-row">
+                    <label for="sizePoemSig">落款</label>
+                    <input id="sizePoemSig" type="number" min="10" max="28" step="1" value="14" aria-label="落款字号">
+                    <span class="unit">px</span>
+                </div>
+            </section>
+
+            <section class="panel">
+                <h2>操作</h2>
+                <button id="yearShotBtn" class="btn primary">📦 导出全年 12 张</button>
+                <button id="monthShotBtn" class="btn">📸 只导出当月</button>
+                <p class="hint" id="shotHint">截取右侧日历区域，每张 758 × 1024（Kindle 原尺寸）。全年导出会打包成一个 zip。</p>
+            </section>
+        </aside>
+
+        <!-- ============ 右侧：展示区域（截图对象） ============ -->
+        <main class="preview" id="preview">
+            <div class="stage" id="stage">
+                <div class="calendar-container" id="calendarContainer">
+                    <div class="calendar-header">
+                        <h1 id="headerTitle">二〇二六年十月 丙午 马年</h1>
+                    </div>
+
+                    <div class="weekdays">
+                        <div>一</div>
+                        <div>二</div>
+                        <div>三</div>
+                        <div>四</div>
+                        <div>五</div>
+                        <div>六</div>
+                        <div>日</div>
+                    </div>
+                    <div class="days-grid" id="daysGrid">
+                        <!-- 日期格子将由JS生成 -->
+                    </div>
+
+                    <!-- 底部诗句：贴住画布下沿，用格子下方的留白 -->
+                    <footer class="poem-footer">
+                        <div class="poem-text" id="poemText"></div>
+                        <div class="poem-signature" id="poemSignature"></div>
+                    </footer>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <!-- 导出遮罩（不在截图范围内） -->
+    <div class="export-mask" id="exportMask">
+        <span id="exportMaskText">正在导出…</span>
+    </div>
+
+    <script>
+        // 法定节假日 + 调休安排来自 data/holidays.js（按年份维护，需人工补充）
+        // 这里把它摊平成 { 'YYYY-MM-DD': 'rest' | 'work' } 方便按天查
+        const HOLIDAY_INDEX = (function buildHolidayIndex() {
+            const index = {};
+            const data = window.HOLIDAY_DATA || {};
+            Object.keys(data).forEach(year => {
+                (data[year] || []).forEach(item => {
+                    (item.rest || []).forEach(date => { index[date] = 'rest'; });
+                    (item.work || []).forEach(date => { index[date] = 'work'; });
+                });
+            });
+            return index;
+        })();
+
+        function hasYearHolidayData(year) {
+            return !!(window.HOLIDAY_DATA && window.HOLIDAY_DATA[year]);
+        }
+
+        function holidayYearSummary(year) {
+            const list = (window.HOLIDAY_DATA && window.HOLIDAY_DATA[year]) || [];
+            return list.reduce((acc, item) => {
+                acc.rest += (item.rest || []).length;
+                acc.work += (item.work || []).length;
+                return acc;
+            }, { rest: 0, work: 0 });
+        }
+
+        // 诗句 / 名言来自 data/poems.js（按「集合」组织，每月一句）
+        const POEM_SETS = window.POEM_DATA || {};
+        const POEM_SET_KEYS = Object.keys(POEM_SETS);
+
+        // 日历画布的固定尺寸（Kindle 竖屏）
+        const PREVIEW_W = 758;
+        const PREVIEW_H = 1024;
+
+        // 默认打开「当前月」，想固定某个起始月改这两行即可
+        const today = new Date();
+        let currentYear = today.getFullYear();
+        let currentMonth = today.getMonth(); // 0-11
+
+        const daysGrid = document.getElementById('daysGrid');
+        const monthTitle = document.getElementById('monthTitle');
+        const headerTitle = document.getElementById('headerTitle');
+        const previewEl = document.getElementById('preview');
+        const stageEl = document.getElementById('stage');
+        const calendarContainer = document.getElementById('calendarContainer');
+        const poemTextEl = document.getElementById('poemText');
+        const poemSignatureEl = document.getElementById('poemSignature');
+        const poemSetSelect = document.getElementById('poemSetSelect');
+
+        // 当前使用的诗句集 id（data/poems.js 里的 key）
+        let poemSetKey = POEM_SET_KEYS[0] || null;
+
+        // 取「当前诗句集」里第 month 个月的内容并写进落款
+        function updatePoem(month) {
+            const set = poemSetKey ? POEM_SETS[poemSetKey] : null;
+            const item = (set && set.months) ? set.months[month] : null;
+
+            poemTextEl.textContent = item ? item.text : '';
+            poemSignatureEl.textContent = item ? item.sig : '';
+
+            // 这一集缺这个月的内容时，整块藏起来，避免留一排空白
+            document.querySelector('.poem-footer').classList.toggle('is-empty', !item);
+        }
+
+        // 初始化下拉框：列出 data/poems.js 里所有集合
+        function initPoemSets() {
+            if (!POEM_SET_KEYS.length) {
+                poemSetSelect.innerHTML = '<option>未加载诗句数据</option>';
+                poemSetSelect.disabled = true;
+                return;
+            }
+            poemSetSelect.innerHTML = POEM_SET_KEYS
+                .map(key => `<option value="${key}">${POEM_SETS[key].label || key}</option>`)
+                .join('');
+            poemSetSelect.value = poemSetKey;
+        }
+
+        poemSetSelect.addEventListener('change', () => {
+            poemSetKey = poemSetSelect.value;
+            updatePoem(currentMonth + 1);
+            saveRegionSettings();
+        });
+
+        initPoemSets();
+
+        // ================= 右侧画布缩放：完整可见，不撑破右半屏 =================
+        function fitPreview() {
+            const rect = previewEl.getBoundingClientRect();
+            const padding = 48; // 四周留白
+            const scale = Math.min(
+                1,
+                Math.max(0.2, (rect.width - padding) / PREVIEW_W),
+                Math.max(0.2, (rect.height - padding) / PREVIEW_H)
+            );
+            stageEl.style.width = PREVIEW_W * scale + 'px';
+            stageEl.style.height = PREVIEW_H * scale + 'px';
+            calendarContainer.style.transform = `scale(${scale})`;
+        }
+
+        if (window.ResizeObserver) {
+            new ResizeObserver(fitPreview).observe(previewEl);
+        }
+        window.addEventListener('resize', fitPreview);
+
+        // ================= 三个区域的字体 / 字号 =================
+        // 1. 年月标题  2. 星期表头  3. 日期数字 + 农历（农历按比例跟随日期字号）
+        const FONT_PRESETS = {
+            sans: '-apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif',
+            song: '"Songti SC", "STSong", "SimSun", "Noto Serif CJK SC", serif',
+            kai: '"Kaiti SC", "STKaiti", "KaiTi", "BiauKai", serif',
+            // 优先用 fonts/zhuan.ttf，其次找系统里已装的常见篆体，最后回退到楷体
+            zhuan: '"ZhuanTi", "方正小篆体", "FZXiaoZhuanTi", "汉仪篆书繁", "HYZhuanShu", "STZhuanShu", "华文篆书", "Kaiti SC", serif'
+        };
+
+        const FONT_OPTIONS = [
+            ['sans', '黑体'],
+            ['song', '宋体'],
+            ['kai', '楷体'],
+            ['zhuan', '篆体']
+        ];
+
+        // 只列篆体家族名，用来判断「篆体到底有没有装」
+        const SEAL_FONT_NAMES = ['ZhuanTi', '方正小篆体', 'FZXiaoZhuanTi', '汉仪篆书繁', 'HYZhuanShu', 'STZhuanShu', '华文篆书'];
+
+        // 农历字号 = 日期字号 × 该比例（默认 28px → 15px，保持原有比例）
+        const LUNAR_RATIO = 15 / 28;
+
+        const TYPE_REGIONS = [
+            { key: 'header',   fontSelectId: 'fontHeader',   sizeInputId: 'sizeHeader',   fontVar: '--font-header',   sizeVar: '--size-header',   defaultFont: 'sans', defaultSize: 32 },
+            { key: 'weekdays', fontSelectId: 'fontWeekdays', sizeInputId: 'sizeWeekdays', fontVar: '--font-weekdays', sizeVar: '--size-weekdays', defaultFont: 'sans', defaultSize: 20 },
+            { key: 'date',     fontSelectId: 'fontDate',     sizeInputId: 'sizeDate',     fontVar: '--font-date',     sizeVar: '--size-date',     defaultFont: 'sans', defaultSize: 28 }
+        ];
+
+        const fontHint = document.getElementById('fontHint');
+        const holidayHint = document.getElementById('holidayHint');
+
+        // 用 canvas 画同一个字，比较「篆体字体栈」和「serif」的像素差异，判断篆体是否真的可用
+        function fontSignature(font) {
+            const canvas = document.createElement('canvas');
+            canvas.width = 64;
+            canvas.height = 64;
+            const ctx = canvas.getContext('2d');
+            ctx.font = font;
+            ctx.textBaseline = 'top';
+            ctx.fillText('篆', 2, 2);
+            return canvas.toDataURL();
+        }
+
+        function hasSealFont() {
+            const probe = SEAL_FONT_NAMES.map(n => `"${n}"`).join(', ') + ', serif';
+            return fontSignature(`40px ${probe}`) !== fontSignature('40px serif');
+        }
+
+        function updateFontHint() {
+            const usingSeal = TYPE_REGIONS.some(r => document.getElementById(r.fontSelectId).value === 'zhuan');
+            const missing = usingSeal && !hasSealFont();
+            fontHint.textContent = missing ? '未找到篆体字体，请把字体文件放到 fonts/zhuan.ttf' : '';
+            fontHint.classList.toggle('error', missing);
+        }
+
+        function getSizeInput(region) {
+            return document.getElementById(region.sizeInputId);
+        }
+
+        // 把某个区域的页面输入写进对应的 CSS 变量
+        function applyRegion(region) {
+            const select = document.getElementById(region.fontSelectId);
+            const input = getSizeInput(region);
+            const fontKey = FONT_PRESETS[select.value] ? select.value : region.defaultFont;
+
+            const min = Number(input.min);
+            const max = Number(input.max);
+            let size = Number(input.value);
+            if (!Number.isFinite(size) || size <= 0) {
+                size = region.defaultSize;
+            }
+            size = Math.min(max, Math.max(min, Math.round(size)));
+
+            const root = document.documentElement.style;
+            root.setProperty(region.fontVar, FONT_PRESETS[fontKey]);
+            root.setProperty(region.sizeVar, size + 'px');
+
+            // 日期区域还要按比例带出农历字号
+            if (region.key === 'date') {
+                root.setProperty('--size-lunar', Math.round(size * LUNAR_RATIO) + 'px');
+            }
+
+            updateFontHint();
+            document.fonts.ready.then(updateFontHint);
+        }
+
+        function applyAllRegions() {
+            TYPE_REGIONS.forEach(applyRegion);
+        }
+
+        function saveRegionSettings() {
+            const state = {};
+            TYPE_REGIONS.forEach(r => {
+                state[r.key] = {
+                    font: document.getElementById(r.fontSelectId).value,
+                    size: Number(getSizeInput(r).value) || r.defaultSize
+                };
+            });
+            state.poemSet = poemSetKey;
+            state.poemText = Number(document.getElementById('sizePoem').value) || 22;
+            state.poemSig = Number(document.getElementById('sizePoemSig').value) || 14;
+            try { localStorage.setItem('calendarType', JSON.stringify(state)); } catch (e) {}
+        }
+
+        // 初始化：填充字体选项
+        TYPE_REGIONS.forEach(region => {
+            const select = document.getElementById(region.fontSelectId);
+            select.innerHTML = FONT_OPTIONS
+                .map(([value, label]) => `<option value="${value}">${label}</option>`)
+                .join('');
+            select.value = region.defaultFont;
+        });
+
+        // 读取上次保存的设置
+        try {
+            const saved = JSON.parse(localStorage.getItem('calendarType') || 'null');
+            if (saved) {
+                TYPE_REGIONS.forEach(region => {
+                    const item = saved[region.key] || {};
+                    if (FONT_PRESETS[item.font]) {
+                        document.getElementById(region.fontSelectId).value = item.font;
+                    }
+                    if (Number(item.size) > 0) {
+                        const input = getSizeInput(region);
+                        // 兼容旧保存值：超出当前 min/max 时收敛到边界
+                        input.value = Math.min(
+                            Number(input.max),
+                            Math.max(Number(input.min), Math.round(Number(item.size)))
+                        );
+                    }
+                });
+
+                // 上次选的诗句集
+                if (saved.poemSet && POEM_SETS[saved.poemSet]) {
+                    poemSetKey = saved.poemSet;
+                    poemSetSelect.value = poemSetKey;
+                }
+
+                // 诗句 / 落款的字号
+                [
+                    ['sizePoem', 'poemText', 22],
+                    ['sizePoemSig', 'poemSig', 14]
+                ].forEach(([id, key, fallback]) => {
+                    const input = document.getElementById(id);
+                    const value = Number(saved[key]);
+                    if (value > 0) {
+                        input.value = Math.min(Number(input.max), Math.max(Number(input.min), Math.round(value)));
+                    } else {
+                        input.value = fallback;
+                    }
+                });
+            }
+        } catch (e) {}
+
+        applyAllRegions();
+
+        // 绑定事件
+        TYPE_REGIONS.forEach(region => {
+            const select = document.getElementById(region.fontSelectId);
+            const input = getSizeInput(region);
+
+            select.addEventListener('change', () => {
+                applyRegion(region);
+                saveRegionSettings();
+            });
+
+            // 输入过程中即时预览
+            input.addEventListener('input', () => {
+                applyRegion(region);
+                saveRegionSettings();
+            });
+
+            // 失焦时把越界/空值拉回合法范围
+            input.addEventListener('change', () => {
+                const min = Number(input.min);
+                const max = Number(input.max);
+                let size = Number(input.value);
+                if (!Number.isFinite(size) || size <= 0) {
+                    size = region.defaultSize;
+                }
+                input.value = Math.min(max, Math.max(min, Math.round(size)));
+                applyRegion(region);
+                saveRegionSettings();
+            });
+        });
+
+        // ---------- 诗句 / 落款：只调字号（字体固定楷体） ----------
+        const POEM_SIZE_INPUTS = [
+            { inputId: 'sizePoem',    cssVar: '--size-poem',     defaultSize: 22 },
+            { inputId: 'sizePoemSig', cssVar: '--size-poem-sig', defaultSize: 14 }
+        ];
+
+        function applyPoemSize(cfg) {
+            const input = document.getElementById(cfg.inputId);
+            const min = Number(input.min);
+            const max = Number(input.max);
+            let size = Number(input.value);
+            if (!Number.isFinite(size) || size <= 0) {
+                size = cfg.defaultSize;
+            }
+            size = Math.min(max, Math.max(min, Math.round(size)));
+            document.documentElement.style.setProperty(cfg.cssVar, size + 'px');
+        }
+
+        POEM_SIZE_INPUTS.forEach(cfg => {
+            const input = document.getElementById(cfg.inputId);
+
+            input.addEventListener('input', () => {
+                applyPoemSize(cfg);
+                saveRegionSettings();
+            });
+
+            input.addEventListener('change', () => {
+                const min = Number(input.min);
+                const max = Number(input.max);
+                let size = Number(input.value);
+                if (!Number.isFinite(size) || size <= 0) {
+                    size = cfg.defaultSize;
+                }
+                input.value = Math.min(max, Math.max(min, Math.round(size)));
+                applyPoemSize(cfg);
+                saveRegionSettings();
+            });
+
+            applyPoemSize(cfg);
+        });
+
+        // ================= 农历 / 节气 / 节日（本地计算，不联网） =================
+        // 库里 getFestivals() 还包含「世界住房日」「万圣节」这类国际性节日，
+        // 日历上只想保留中文常见节日，所以用白名单过滤
+        const FESTIVAL_WHITELIST = new Set([
+            // 公历节日
+            '元旦', '元旦节', '情人节', '妇女节', '植树节', '愚人节', '劳动节', '青年节',
+            '儿童节', '建党节', '建军节', '教师节', '国庆节', '平安夜', '圣诞节',
+            // 农历节日
+            '春节', '元宵节', '龙抬头', '端午节', '七夕节', '中元节', '中秋节', '重阳节',
+            '腊八节', '小年', '除夕'
+        ]);
+
+        function pickFestival(list) {
+            return list.find(name => FESTIVAL_WHITELIST.has(name)) || '';
+        }
+
+        // 一天显示什么，优先级：公历节日 > 农历节日 > 节气 > 初一显示月名 > 农历日
+        function getDayInfo(dateObj) {
+            // 兜底：万一 vendor/lunar.min.js 没加载上，仍然显示数字日历，不至于整页空白
+            if (typeof Solar === 'undefined') {
+                return { text: '', special: false };
+            }
+            const solar = Solar.fromDate(dateObj);
+            const lunar = solar.getLunar();
+
+            const solarFestival = pickFestival(solar.getFestivals());
+            if (solarFestival) {
+                return { text: solarFestival, special: true };
+            }
+
+            const lunarFestival = pickFestival(lunar.getFestivals());
+            if (lunarFestival) {
+                return { text: lunarFestival, special: true };
+            }
+
+            const jieQi = lunar.getJieQi();
+            if (jieQi) {
+                return { text: jieQi, special: true };
+            }
+
+            if (lunar.getDayInChinese() === '初一') {
+                return { text: lunar.getMonthInChinese() + '月', special: true };
+            }
+
+            return { text: lunar.getDayInChinese(), special: false };
+        }
+
+        // 年月标题用的中文数字：2027 → 二〇二七，12 → 十二
+        const CN_DIGITS = ['〇', '一', '二', '三', '四', '五', '六', '七', '八', '九'];
+        const CN_MONTHS = ['一', '二', '三', '四', '五', '六', '七', '八', '九', '十', '十一', '十二'];
+
+        function yearToChinese(year) {
+            return String(year).split('').map(d => CN_DIGITS[Number(d)]).join('');
+        }
+
+        function monthToChinese(month) {
+            return CN_MONTHS[month - 1] || String(month);
+        }
+
+        // ================= 渲染日历 =================
+        function renderCalendar(year, month) {
+            const monthStr = month + 1;
+            // 左侧导航保持阿拉伯数字，方便快速扫读
+            monthTitle.textContent = `${year}年 ${monthStr}月`;
+            if (yearInput) yearInput.value = year;
+            // 干支纪年 / 生肖年：取该公历年所属的农历年（用 7 月 1 日取样，必定在该年春节之后）
+            // 这样「2026年」全年都显示丙午马年，和纸质日历的习惯一致
+            let ganZhiText = '';
+            if (typeof Solar !== 'undefined') {
+                const yearLunar = Solar.fromYmd(year, 7, 1).getLunar();
+                ganZhiText = ` ${yearLunar.getYearInGanZhi()} ${yearLunar.getYearShengXiao()}年`;
+            }
+            // 日历画布上的标题用中文数字：二〇二七年四月
+            headerTitle.textContent = `${yearToChinese(year)}年${monthToChinese(monthStr)}月${ganZhiText}`;
+
+            // 底部诗句：按月份从当前「诗句集」里取，和年份无关
+            updatePoem(monthStr);
+
+            // 提示该年的调休数据是否已经维护
+            if (hasYearHolidayData(year)) {
+                const summary = holidayYearSummary(year);
+                holidayHint.textContent = `已加载 ${year} 年调休安排：放假 ${summary.rest} 天、调休上班 ${summary.work} 天`;
+                holidayHint.classList.remove('error');
+            } else {
+                holidayHint.textContent = `${year} 年暂无调休数据，仅按周末判断（可在 data/holidays.js 补充）`;
+                holidayHint.classList.add('error');
+            }
+
+            daysGrid.innerHTML = '';
+
+            // 计算月首偏移和天数
+            const firstDayOfMonth = new Date(year, month, 1).getDay();
+            const offset = firstDayOfMonth === 0 ? 6 : firstDayOfMonth - 1;
+            const daysInMonth = new Date(year, month + 1, 0).getDate();
+            const daysInPrevMonth = new Date(year, month, 0).getDate();
+
+            // 如果最后一行全是下个月的日期，就整行不显示（5 行即可放下时只渲染 5 行）
+            const neededCells = offset + daysInMonth;      // 本月日期实际占用的格子数
+            const rows = neededCells <= 35 ? 5 : 6;        // 35 = 5 行 * 7 列
+            const totalCells = rows * 7;
+
+            for (let i = 0; i < totalCells; i++) {
+                const cell = document.createElement('div');
+                cell.className = 'day-cell';
+
+                let dayNumber;
+                let isCurrentMonth = true;
+                let dateObj;
+
+                // 区分 上个月、本月、下个月 的日期
+                if (i < offset) {
+                    dayNumber = daysInPrevMonth - offset + i + 1;
+                    isCurrentMonth = false;
+                    dateObj = new Date(year, month - 1, dayNumber);
+                } else if (i >= offset + daysInMonth) {
+                    dayNumber = i - offset - daysInMonth + 1;
+                    isCurrentMonth = false;
+                    dateObj = new Date(year, month + 1, dayNumber);
+                } else {
+                    dayNumber = i - offset + 1;
+                    dateObj = new Date(year, month, dayNumber);
+                }
+
+                const yStr = String(dateObj.getFullYear());
+                const mStr = String(dateObj.getMonth() + 1).padStart(2, '0');
+                const dStr = String(dateObj.getDate()).padStart(2, '0');
+                const dateKey = `${yStr}-${mStr}-${dStr}`;
+
+                if (!isCurrentMonth) {
+                    cell.classList.add('other-month');
+                }
+
+                // 1. 公历数字
+                const solarDiv = document.createElement('div');
+                solarDiv.className = 'solar-day';
+                solarDiv.textContent = dayNumber;
+                cell.appendChild(solarDiv);
+
+                // 2. 农历/节气/节日文本（全部由本地农历库实时计算）
+                const lunarDiv = document.createElement('div');
+                lunarDiv.className = 'lunar-day';
+                const dayInfo = getDayInfo(dateObj);
+                lunarDiv.textContent = dayInfo.text;
+                if (dayInfo.special) {
+                    lunarDiv.classList.add('special');
+                }
+                cell.appendChild(lunarDiv);
+
+                // 3. 休/班标签及背景色
+                // 判定是否上班日：先看有没有法定节假日/调休安排，没有则按周六、周日判断
+                const dayOfWeek = dateObj.getDay(); // 0=周日, 6=周六
+                const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
+                const hType = HOLIDAY_INDEX[dateKey]; // 'rest' | 'work' | undefined
+                // 调休上班 -> 上班；法定节假日 -> 休息；其余日期 -> 周末休息、工作日上班
+                const isRestDay = hType ? hType === 'rest' : isWeekend;
+
+                if (isCurrentMonth && isRestDay) {
+                    cell.classList.add('bg-highlight');
+                }
+
+                // 只有法定节假日和调休上班才打“休/班”徽标，避免每个周末都挂满徽标
+                if (hType && isCurrentMonth) {
+                    const badge = document.createElement('div');
+                    badge.className = `badge ${hType}`;
+                    badge.textContent = hType === 'rest' ? '休' : '班';
+                    cell.appendChild(badge);
+                }
+
+                daysGrid.appendChild(cell);
+            }
+        }
+
+        // 按钮事件：切换月份
+        function goPrevMonth() {
+            if (currentMonth === 0) {
+                currentMonth = 11;
+                currentYear -= 1;
+            } else {
+                currentMonth--;
+            }
+            renderCalendar(currentYear, currentMonth);
+        }
+
+        function goNextMonth() {
+            if (currentMonth === 11) {
+                currentMonth = 0;
+                currentYear += 1;
+            } else {
+                currentMonth++;
+            }
+            renderCalendar(currentYear, currentMonth);
+        }
+
+        function goTo(year, month) {
+            currentYear = year;
+            currentMonth = month;
+            renderCalendar(currentYear, currentMonth);
+        }
+
+        document.getElementById('prevBtn').addEventListener('click', goPrevMonth);
+        document.getElementById('nextBtn').addEventListener('click', goNextMonth);
+
+        // 年份跳转（保持当前月份）
+        const yearInput = document.getElementById('yearInput');
+        const YEAR_MIN = Number(yearInput.min) || 1900;
+        const YEAR_MAX = Number(yearInput.max) || 2200;
+
+        yearInput.addEventListener('change', () => {
+            let year = Math.round(Number(yearInput.value));
+            if (!Number.isFinite(year)) {
+                yearInput.value = currentYear;
+                return;
+            }
+            year = Math.min(YEAR_MAX, Math.max(YEAR_MIN, year));
+            yearInput.value = year;
+            goTo(year, currentMonth);
+        });
+
+        // 回到今天
+        document.getElementById('todayBtn').addEventListener('click', () => {
+            const now = new Date();
+            goTo(now.getFullYear(), now.getMonth());
+        });
+
+        // 键盘 ← / → 切月（输入框、下拉框里不拦截）
+        document.addEventListener('keydown', (event) => {
+            const tag = (event.target.tagName || '').toLowerCase();
+            if (tag === 'input' || tag === 'select' || tag === 'textarea') return;
+            if (event.key === 'ArrowLeft') {
+                event.preventDefault();
+                goPrevMonth();
+            } else if (event.key === 'ArrowRight') {
+                event.preventDefault();
+                goNextMonth();
+            }
+        });
+
+        // ================= 截图功能（只截右侧日历区域） =================
+        const CAPTURE_OPTIONS = {
+            scale: 1,                   // 1:1 输出 = 758 × 1024（Kindle 原尺寸）
+            useCORS: true,
+            backgroundColor: '#ffffff',
+            logging: false,
+            width: PREVIEW_W,
+            height: PREVIEW_H
+        };
+
+        const yearShotBtn = document.getElementById('yearShotBtn');
+        const monthShotBtn = document.getElementById('monthShotBtn');
+        const prevBtn = document.getElementById('prevBtn');
+        const nextBtn = document.getElementById('nextBtn');
+
+        // 等一次重排/重绘，确保 html2canvas 拿到的是新月份已排好的布局
+        function nextTick() {
+            return new Promise(resolve => setTimeout(resolve, 16));
+        }
+
+        // 截图期间把画布移到视口左上角并还原成 1:1：
+        // 预览里的缩放和居中偏移都会让 html2canvas 裁错位置，挪到原点最稳
+        function beginCapture() {
+            const saved = {
+                transform: calendarContainer.style.transform,
+                position: calendarContainer.style.position,
+                top: calendarContainer.style.top,
+                left: calendarContainer.style.left,
+                boxShadow: calendarContainer.style.boxShadow,
+                width: stageEl.style.width,
+                height: stageEl.style.height
+            };
+            stageEl.style.width = PREVIEW_W + 'px';
+            stageEl.style.height = PREVIEW_H + 'px';
+            Object.assign(calendarContainer.style, {
+                position: 'fixed',
+                top: '0',
+                left: '0',
+                transform: 'none',
+                boxShadow: 'none'
+            });
+            return function endCapture() {
+                calendarContainer.style.transform = saved.transform;
+                calendarContainer.style.position = saved.position;
+                calendarContainer.style.top = saved.top;
+                calendarContainer.style.left = saved.left;
+                calendarContainer.style.boxShadow = saved.boxShadow;
+                stageEl.style.width = saved.width;
+                stageEl.style.height = saved.height;
+            };
+        }
+
+        // 导出遮罩：截图时盖住页面，顺便显示进度
+        const exportMask = document.getElementById('exportMask');
+        const exportMaskText = document.getElementById('exportMaskText');
+
+        function showMask(text) {
+            exportMaskText.textContent = text;
+            exportMask.classList.add('active');
+        }
+
+        function hideMask() {
+            exportMask.classList.remove('active');
+        }
+
+        // 导出期间锁住所有会改变画面的按钮
+        function setBusy(busy) {
+            // 按钮 + 月份导航 + 字体/字号控件全部锁住，避免导出途中改设置导致 12 张图风格不一致
+            [yearShotBtn, monthShotBtn, prevBtn, nextBtn, yearInput, todayBtn].forEach(el => {
+                if (el) el.disabled = busy;
+            });
+            TYPE_REGIONS.forEach(region => {
+                document.getElementById(region.fontSelectId).disabled = busy;
+                document.getElementById(region.sizeInputId).disabled = busy;
+            });
+            POEM_SIZE_INPUTS.forEach(cfg => {
+                document.getElementById(cfg.inputId).disabled = busy;
+            });
+            poemSetSelect.disabled = busy;
+        }
+
+        function downloadBlob(blob, filename) {
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = filename;
+            document.body.appendChild(link);
+            link.click();
+            link.remove();
+            setTimeout(() => URL.revokeObjectURL(url), 10000);
+        }
+
+        // 当月截图
+        monthShotBtn.addEventListener('click', async () => {
+            const originalText = monthShotBtn.textContent;
+            const endCapture = beginCapture();
+
+            try {
+                setBusy(true);
+                monthShotBtn.textContent = '生成中…';
+                showMask('正在生成当月日历…');
+
+                const canvas = await html2canvas(calendarContainer, CAPTURE_OPTIONS);
+                const imgData = canvas.toDataURL('image/png');
+
+                const link = document.createElement('a');
+                link.download = `calendar-${currentYear}${String(currentMonth + 1).padStart(2, '0')}.png`;
+                link.href = imgData;
+                link.click();
+            } catch (error) {
+                console.error('截图失败:', error);
+                alert('截图失败，请查看控制台。');
+            } finally {
+                hideMask();
+                endCapture();
+                monthShotBtn.textContent = originalText;
+                setBusy(false);
+            }
+        });
+
+        // 全年截图：把当前年份 1-12 月逐个渲染 + 截图，最后打包成一个 zip
+        yearShotBtn.addEventListener('click', async () => {
+            const year = currentYear;
+            const originalText = yearShotBtn.textContent;
+            const endCapture = beginCapture();
+
+            try {
+                setBusy(true);
+
+                const zip = new JSZip();
+
+                for (let month = 0; month < 12; month++) {
+                    yearShotBtn.textContent = `导出中 ${month + 1}/12…`;
+                    showMask(`正在导出 ${year} 年 ${month + 1} 月（${month + 1}/12）…`);
+
+                    renderCalendar(year, month);
+                    await nextTick();
+
+                    const canvas = await html2canvas(calendarContainer, CAPTURE_OPTIONS);
+                    const base64 = canvas.toDataURL('image/png').split(',')[1];
+                    const monthName = String(month + 1).padStart(2, '0');
+                    zip.file(`calendar-${year}${monthName}.png`, base64, { base64: true });
+                }
+
+                yearShotBtn.textContent = '打包中…';
+                const blob = await zip.generateAsync({ type: 'blob' });
+                downloadBlob(blob, `calendar-${year}.zip`);
+            } catch (error) {
+                console.error('导出失败:', error);
+                alert('导出失败，请查看控制台。');
+            } finally {
+                hideMask();
+                // 还原成导出前正在看的月份，再还原预览缩放
+                renderCalendar(currentYear, currentMonth);
+                endCapture();
+                yearShotBtn.textContent = originalText;
+                setBusy(false);
+            }
+        });
+
+        // 页面加载完成，默认渲染 2026年10月
+        renderCalendar(currentYear, currentMonth);
+        fitPreview();
+    </script>
+</body>
+</html>
